@@ -12,26 +12,30 @@ from Crypto.Util.Padding import unpad
 
 
 class AkamaiPlayerIN:
+    API_ENDPOINT = ""
+
     def __init__(
             self,
             token: str,
             course_id: int,
-            video_id: int
+            video_id: int,
+            folder_wide_course: str
     ):
         self.token = token
         self.course_id = course_id
         self.video_id = video_id
+        self.folder_wide_course = folder_wide_course
 
         self.session = requests.Session()
 
     def _get_player_token(self):
         response = self.session.get(
-            url='https://tempapi.classx.co.in/get/fetchVideoDetailsById',
+            url=self.API_ENDPOINT,
             params={
                 'course_id': self.course_id,
                 'video_id': self.video_id,
                 'ytflag': '0',
-                'folder_wise_course': '0',
+                'folder_wise_course': int(bool(self.folder_wide_course)),
             },
             headers={
                 'auth-key': 'appxapi',
@@ -39,6 +43,7 @@ class AkamaiPlayerIN:
             }
         )
         logging.info(response.status_code)
+        logging.debug(response.text)
 
         return response.json()["data"]["video_player_token"]
 
@@ -53,6 +58,7 @@ class AkamaiPlayerIN:
             }
         )
         logging.info(response.status_code)
+        logging.debug(response.text)
 
         __NEXT_DATA__ = json.loads(
             re.findall(r"<script id=\"__NEXT_DATA__\" type=\"application/json\">(.*)</script>", response.text)[0]
@@ -105,15 +111,17 @@ class AkamaiPlayerIN:
         master_playlist = m3u8.M3U8()
 
         for url in urls:
-            kstr = base64.b64decode(player.aes_decrypt(
-                content=base64.b64decode(url["kstr"]),
-                lv=derived_key,
-                ivb6=base64.b64decode(ivb6)
-            ))
+            kstr = url["kstr"]
+            if kstr:
+                decrypted_kstr = base64.b64decode(player.aes_decrypt(
+                    content=base64.b64decode(kstr),
+                    lv=derived_key,
+                    ivb6=base64.b64decode(ivb6)
+                ))
 
-            key_file = f"{self.course_id}_{self.video_id}_{url['quality']}.key"
-            with open(key_file, "wb") as f:
-                f.write(kstr)
+                key_file = f"{self.course_id}_{self.video_id}_{url['quality']}.key"
+                with open(key_file, "wb") as f:
+                    f.write(decrypted_kstr)
 
             jstr = player.aes_decrypt(
                 content=base64.b64decode(url["jstr"]),
@@ -122,7 +130,8 @@ class AkamaiPlayerIN:
             )
 
             m3u8_object = m3u8.loads(jstr)
-            m3u8_object.keys[0].uri = key_file
+            if kstr:
+                m3u8_object.keys[0].uri = key_file
 
             playlist_file = f"{self.course_id}_{self.video_id}_{url['quality']}.m3u8"
             with open(playlist_file, "w") as f:
@@ -151,6 +160,7 @@ if __name__ == '__main__':
     parser.add_argument("--token", action="store", required=True)
     parser.add_argument("--course", action="store", required=True)
     parser.add_argument("--video", action="store", required=True)
+    parser.add_argument("--folder_course", action="store", required=False, default=False)
     args = parser.parse_args()
 
     logging.basicConfig(format='[%(levelname)s]: %(message)s', level=logging.INFO)
@@ -159,5 +169,6 @@ if __name__ == '__main__':
         token=args.token,
         course_id=args.course,
         video_id=args.video,
+        folder_wide_course=args.folder_course
     )
     logging.info(player.get_metadata())
